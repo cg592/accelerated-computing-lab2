@@ -36,6 +36,17 @@ fma_latency(data_type *n, unsigned long long *d_start, unsigned long long *d_end
     data_type y6 = 0;
     data_type y7 = 0;
     data_type y8 = 0;
+    data_type y9 = 0;
+    data_type y10 = 0;
+    data_type y11 = 0;
+    data_type y12 = 0;
+    data_type y13 = 0;
+    data_type y14 = 0;
+    data_type y15 = 0;
+    data_type y16 = 0;
+    data_type y17 = 0;
+    data_type y18 = 0;
+
     // Memory fence to ensure that the reads are done.
     __threadfence();
     start_time = clock_cycle();
@@ -49,14 +60,24 @@ fma_latency(data_type *n, unsigned long long *d_start, unsigned long long *d_end
     y6 += y5 * 4; // 7
     y7 += y6 * 4; // 8
     y8 += y7 * 4; // 9
-    x += y8 * 4; // 10
+    y9 += y8 * 4; // 10
+    y10 += y9 * 4; // 11
+    y11 += y10 * 4; // 12
+    y12 += y11 * 4; // 13
+    y13 += y12 * 4; // 14
+    y14 += y13 * 4; // 15
+    y15 += y14 * 4; // 16
+    y16 += y15 * 4; // 17
+    y17 += y16 * 4; // 18
+    y18 += y17 * 4; // 19
+    x += y18 * 4; // 20
 
     end_time = clock_cycle();
 
     *n = x;
     *d_start = start_time;
     *d_end =  end_time;
-    *num_fmas = 10;
+    *num_fmas = 20;
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -77,10 +98,21 @@ __global__ void fma_latency_interleaved(
     data_type tx1 = 0;
     data_type tx2 = 0;
     data_type tx3 = 0;
+    data_type tx4 = 0;
+    data_type tx5 = 0;
+    data_type tx6 = 0;
+    data_type tx7 = 0;
+    data_type tx8 = 0;
+
     data_type ty0 = 0;
     data_type ty1 = 0;
     data_type ty2 = 0;
     data_type ty3 = 0;
+    data_type ty4 = 0;
+    data_type ty5 = 0;
+    data_type ty6 = 0;
+    data_type ty7 = 0;
+    data_type ty8 = 0;
 
     // Memory fence to ensure that the reads are done.
     __threadfence();
@@ -95,15 +127,25 @@ __global__ void fma_latency_interleaved(
     ty2 += ty1 * 4; // 6
     tx3 += tx2 * 4; // 7
     ty3 += ty2 * 4; // 8
-    x += tx3 * 4; // 9
-    y += ty3 * 4; // 10
+    tx4 += tx3 * 4; // 9
+    ty4 += ty3 * 4; // 10
+    tx5 += tx4 * 4; // 11
+    ty5 += ty4 * 4; // 12
+    tx6 += tx5 * 4; // 13
+    ty6 += ty5 * 4; // 14
+    tx7 += tx6 * 4; // 15
+    ty7 += ty6 * 4; // 16
+    tx8 += tx7 * 4; // 17
+    ty8 += ty7 * 4; // 18
+    x += tx8 * 4; // 19
+    y += ty8 * 4; // 20
 
     end_time = clock_cycle();
 
     *n = x + y;
     *d_start = start_time;
     *d_end = end_time;
-    *num_fmas = 10;
+    *num_fmas = 20;
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -120,19 +162,60 @@ __global__ void fma_latency_no_interleave(
 
     data_type x = *n;
     data_type y = *n;
+
+    data_type tx0 = 0;
+    data_type tx1 = 0;
+    data_type tx2 = 0;
+    data_type tx3 = 0;
+    data_type tx4 = 0;
+    data_type tx5 = 0;
+    data_type tx6 = 0;
+    data_type tx7 = 0;
+    data_type tx8 = 0;
+
+    data_type ty0 = 0;
+    data_type ty1 = 0;
+    data_type ty2 = 0;
+    data_type ty3 = 0;
+    data_type ty4 = 0;
+    data_type ty5 = 0;
+    data_type ty6 = 0;
+    data_type ty7 = 0;
+    data_type ty8 = 0;
+
     // Memory fence to ensure that the reads are done.
     __threadfence();
 
     start_time = clock_cycle();
 
-    /// <--- /your code here --->
+    tx0 += x * 4; // 1
+    tx1 += tx0 * 4; // 3
+    tx2 += tx1 * 4; // 5
+    tx3 += tx2 * 4; // 7
+    tx4 += tx3 * 4; // 9
+    tx5 += tx4 * 4; // 11
+    tx6 += tx5 * 4; // 13
+    tx7 += tx6 * 4; // 15
+    tx8 += tx7 * 4; // 17
+    x += tx8 * 4; // 19
+
+    ty0 += y * 4; // 2
+    ty1 += ty0 * 4; // 4
+    ty2 += ty1 * 4; // 6
+    ty3 += ty2 * 4; // 8
+    ty4 += ty3 * 4; // 10
+    ty5 += ty4 * 4; // 12
+    ty6 += ty5 * 4; // 14
+    ty7 += ty6 * 4; // 16
+    ty8 += ty7 * 4; // 18
+    y += ty8 * 4; // 20
 
     end_time = clock_cycle();
 
     *n = x + y;
     *d_start = start_time;
     *d_end = end_time;
-    *num_fmas = 1;
+    *num_fmas = 20;
 }
 
 ////////////////////////////////////////////////////////////////////////////////
