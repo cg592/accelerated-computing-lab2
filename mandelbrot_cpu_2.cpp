@@ -160,10 +160,9 @@ void mandelbrot_cpu_vector(uint32_t img_size, uint32_t max_iters, uint32_t *out)
             __m512i iters = _mm512_set1_epi32(0);
 		    __m512 x2_y2_sum = _mm512_add_ps(x2, y2);
 		    __mmask16 less_than_four = _mm512_cmp_ps_mask(x2_y2_sum, four_vec, 2);
-            __mmask16 less_than_max_iters = _mm512_cmp_epi32_mask(iters, max_iters_vec, 1);
-            __mmask16 active_mask = _kand_mask16(less_than_four, less_than_max_iters);
 
-            while (active_mask) {
+            int iter = 0;
+            while (iter < max_iters) {
                 __m512 _x = _mm512_sub_ps(x2, y2);
                 __m512 x = _mm512_add_ps(_x, cx);
                 __m512 _y = _mm512_sub_ps(w, x2_y2_sum);
@@ -175,13 +174,15 @@ void mandelbrot_cpu_vector(uint32_t img_size, uint32_t max_iters, uint32_t *out)
                 w = _mm512_mul_ps(z, z);
 
                 // inc loop bounds
-                iters = _mm512_mask_add_epi32(iters, active_mask, iters, _mm512_set1_epi32(1));
+                iters = _mm512_mask_add_epi32(iters, less_than_four, iters, _mm512_set1_epi32(1));
 
                 // repeat the loop bound checks here
-                x2_y2_sum = _mm512_mask_add_ps(x2_y2_sum, active_mask, x2, y2);
+                x2_y2_sum = _mm512_mask_add_ps(x2_y2_sum, less_than_four, x2, y2);
                 less_than_four = _mm512_cmp_ps_mask(x2_y2_sum, four_vec, 2);
-                less_than_max_iters = _mm512_cmp_epi32_mask(iters, max_iters_vec, 1);
-                active_mask = _kand_mask16(less_than_four, less_than_max_iters);
+                iter++;
+                if (!less_than_four) {
+                    break;
+                }
             }
 
             _mm512_storeu_epi32(&(out[i * img_size + ch * chunk_size]), iters);
@@ -199,8 +200,7 @@ void mandelbrot_cpu_vector_ilp(uint32_t img_size, uint32_t max_iters, uint32_t *
     assert(img_size % chunk_size == 0);
     uint32_t num_chunks = img_size / chunk_size;
 
-    // constexpr int unroll_factor = 2;
-    # define unroll_factor 4
+    constexpr int unroll_factor = 4;
 
     __m512 img_size_vec = _mm512_set1_ps(img_size);
     __m512 window_zoom_vec = _mm512_set1_ps(window_zoom);
@@ -209,11 +209,7 @@ void mandelbrot_cpu_vector_ilp(uint32_t img_size, uint32_t max_iters, uint32_t *
     __m512i max_iters_vec = _mm512_set1_epi32(max_iters);
     __m512 four_vec = _mm512_set1_ps(4.0f);
 
-    std::array<__m512, unroll_factor> j_vec;
     std::array<__m512, unroll_factor> i_vec;
-    std::array<__m512, unroll_factor> cx_div;
-    std::array<__m512, unroll_factor> cx_mul;
-    std::array<__m512, unroll_factor> cx;
     std::array<__m512, unroll_factor> cy_div;
     std::array<__m512, unroll_factor> cy_mul;
     std::array<__m512, unroll_factor> cy;
@@ -223,15 +219,12 @@ void mandelbrot_cpu_vector_ilp(uint32_t img_size, uint32_t max_iters, uint32_t *
     std::array<__m512i, unroll_factor> iters;
     std::array<__m512, unroll_factor> x2_y2_sum;
     std::array<__mmask16, unroll_factor> less_than_four;
-    std::array<__mmask16, unroll_factor> less_than_max_iters;
-    std::array<__mmask16, unroll_factor> active_mask;
     std::array<__m512, unroll_factor> _x;
     std::array<__m512, unroll_factor> x;
     std::array<__m512, unroll_factor> _y;
     std::array<__m512, unroll_factor> y;
     std::array<__m512, unroll_factor> z;
     std::array<uint64_t, unroll_factor> i;
-    std::array<uint32_t, unroll_factor> base_j;
 
     assert(img_size % unroll_factor == 0);
     uint64_t num_unrolled_iters = img_size / unroll_factor;
@@ -240,228 +233,232 @@ void mandelbrot_cpu_vector_ilp(uint32_t img_size, uint32_t max_iters, uint32_t *
 
         for (uint64_t ch = 0; ch < num_chunks; ch++) {
 
-            // #pragma clang loop unroll(enable)
-            // for (uint64_t i_offset = 0; i_offset < unroll_factor; i_offset++) {
-            //     i[i_offset] = i_ch * unroll_factor + i_offset;
-
-            //     base_j[i_offset] = ch * chunk_size;
-            //     j_vec[i_offset] = _mm512_set_ps(base_j[i_offset] + 15, base_j[i_offset] + 14, base_j[i_offset] + 13, base_j[i_offset] + 12,
-            //                                 base_j[i_offset] + 11, base_j[i_offset] + 10, base_j[i_offset] + 9, base_j[i_offset] + 8,
-            //                                 base_j[i_offset] + 7, base_j[i_offset] + 6, base_j[i_offset] + 5, base_j[i_offset] + 4,
-            //                                 base_j[i_offset] + 3, base_j[i_offset] + 2, base_j[i_offset] + 1, base_j[i_offset] + 0);
-            //     i_vec[i_offset] = _mm512_set1_ps(i[i_offset]);
-            //     cx_div[i_offset] = _mm512_div_ps(j_vec[i_offset], img_size_vec);
-            //     cx_mul[i_offset] = _mm512_mul_ps(cx_div[i_offset], window_zoom_vec);
-            //     cx[i_offset] = _mm512_add_ps(cx_mul[i_offset], window_x_vec);
-            //     cy_div[i_offset] = _mm512_div_ps(i_vec[i_offset], img_size_vec);
-            //     cy_mul[i_offset] = _mm512_mul_ps(cy_div[i_offset], window_zoom_vec);
-            //     cy[i_offset] = _mm512_add_ps(cy_mul[i_offset], window_y_vec);
-
-            //     x2[i_offset] = _mm512_set1_ps(0);
-            //     y2[i_offset] = _mm512_set1_ps(0);
-            //     w[i_offset] = _mm512_set1_ps(0);
-            //     iters[i_offset] = _mm512_set1_epi32(0);
-
-            //     x2_y2_sum[i_offset] = _mm512_add_ps(x2[i_offset], y2[i_offset]);
-            //     less_than_four[i_offset] = _mm512_cmp_ps_mask(x2_y2_sum[i_offset], four_vec, 2);
-            //     less_than_max_iters[i_offset] = _mm512_cmp_epi32_mask(iters[i_offset], max_iters_vec, 1);
-            //     active_mask[i_offset] = _kand_mask16(less_than_four[i_offset], less_than_max_iters[i_offset]);
-
-            //     while (active_mask[i_offset]) {
-            //         _x[i_offset] = _mm512_sub_ps(x2[i_offset], y2[i_offset]);
-            //         x[i_offset] = _mm512_add_ps(_x[i_offset], cx[i_offset]);
-            //         _y[i_offset] = _mm512_sub_ps(w[i_offset], x2_y2_sum[i_offset]);
-            //         y[i_offset] = _mm512_add_ps(_y[i_offset], cy[i_offset]);
-
-            //         x2[i_offset] = _mm512_mul_ps(x[i_offset], x[i_offset]);
-            //         y2[i_offset] = _mm512_mul_ps(y[i_offset], y[i_offset]);
-            //         z[i_offset] = _mm512_add_ps(x[i_offset], y[i_offset]);
-            //         w[i_offset] = _mm512_mul_ps(z[i_offset], z[i_offset]);
-
-            //         // inc loop bounds
-            //         iters[i_offset] = _mm512_mask_add_epi32(iters[i_offset], active_mask[i_offset], iters[i_offset], _mm512_set1_epi32(1));
-
-            //         // repeat the loop bound checks here
-            //         x2_y2_sum[i_offset] = _mm512_mask_add_ps(x2_y2_sum[i_offset], active_mask[i_offset], x2[i_offset], y2[i_offset]);
-            //         less_than_four[i_offset] = _mm512_cmp_ps_mask(x2_y2_sum[i_offset], four_vec, 2);
-            //         less_than_max_iters[i_offset] = _mm512_cmp_epi32_mask(iters[i_offset], max_iters_vec, 1);
-            //         active_mask[i_offset] = _kand_mask16(less_than_four[i_offset], less_than_max_iters[i_offset]);
-            //     }
-
-            //     _mm512_storeu_epi32(&(out[i[i_offset] * img_size + ch * chunk_size]), iters[i_offset]);
-            // }
+            uint32_t base_j = ch * chunk_size;
+            __m512 j_vec = _mm512_set_ps(base_j + 15, base_j + 14, base_j + 13, base_j + 12,
+                                        base_j + 11, base_j + 10, base_j + 9, base_j + 8,
+                                        base_j + 7, base_j + 6, base_j + 5, base_j + 4,
+                                        base_j + 3, base_j + 2, base_j + 1, base_j + 0);
+            __m512 cx_div = _mm512_div_ps(j_vec, img_size_vec);
+            __m512 cx_mul = _mm512_mul_ps(cx_div, window_zoom_vec);
+            __m512 cx = _mm512_add_ps(cx_mul, window_x_vec);
 
             i[0] = i_ch * unroll_factor + 0;
-            base_j[0] = ch * chunk_size;
-            j_vec[0] = _mm512_set_ps(base_j[0] + 15, base_j[0] + 14, base_j[0] + 13, base_j[0] + 12,
-                                        base_j[0] + 11, base_j[0] + 10, base_j[0] + 9, base_j[0] + 8,
-                                        base_j[0] + 7, base_j[0] + 6, base_j[0] + 5, base_j[0] + 4,
-                                        base_j[0] + 3, base_j[0] + 2, base_j[0] + 1, base_j[0] + 0);
+            i[1] = i_ch * unroll_factor + 1;
+            i[2] = i_ch * unroll_factor + 2;
+            i[3] = i_ch * unroll_factor + 3;
+            // i[4] = i_ch * unroll_factor + 4;
+            // i[5] = i_ch * unroll_factor + 5;
+            // i[6] = i_ch * unroll_factor + 6;
+            // i[7] = i_ch * unroll_factor + 7;
+
             i_vec[0] = _mm512_set1_ps(i[0]);
-            cx_div[0] = _mm512_div_ps(j_vec[0], img_size_vec);
-            cx_mul[0] = _mm512_mul_ps(cx_div[0], window_zoom_vec);
-            cx[0] = _mm512_add_ps(cx_mul[0], window_x_vec);
+            i_vec[1] = _mm512_set1_ps(i[1]);
+            i_vec[2] = _mm512_set1_ps(i[2]);
+            i_vec[3] = _mm512_set1_ps(i[3]);
+            // i_vec[4] = _mm512_set1_ps(i[4]);
+            // i_vec[5] = _mm512_set1_ps(i[5]);
+            // i_vec[6] = _mm512_set1_ps(i[6]);
+            // i_vec[7] = _mm512_set1_ps(i[7]);
+
             cy_div[0] = _mm512_div_ps(i_vec[0], img_size_vec);
+            cy_div[1] = _mm512_div_ps(i_vec[1], img_size_vec);
+            cy_div[2] = _mm512_div_ps(i_vec[2], img_size_vec);
+            cy_div[3] = _mm512_div_ps(i_vec[3], img_size_vec);
+            // cy_div[4] = _mm512_div_ps(i_vec[4], img_size_vec);
+            // cy_div[5] = _mm512_div_ps(i_vec[5], img_size_vec);
+            // cy_div[6] = _mm512_div_ps(i_vec[6], img_size_vec);
+            // cy_div[7] = _mm512_div_ps(i_vec[7], img_size_vec);
+
             cy_mul[0] = _mm512_mul_ps(cy_div[0], window_zoom_vec);
+            cy_mul[1] = _mm512_mul_ps(cy_div[1], window_zoom_vec);
+            cy_mul[2] = _mm512_mul_ps(cy_div[2], window_zoom_vec);
+            cy_mul[3] = _mm512_mul_ps(cy_div[3], window_zoom_vec);
+            // cy_mul[4] = _mm512_mul_ps(cy_div[4], window_zoom_vec);
+            // cy_mul[5] = _mm512_mul_ps(cy_div[5], window_zoom_vec);
+            // cy_mul[6] = _mm512_mul_ps(cy_div[6], window_zoom_vec);
+            // cy_mul[7] = _mm512_mul_ps(cy_div[7], window_zoom_vec);
+
             cy[0] = _mm512_add_ps(cy_mul[0], window_y_vec);
+            cy[1] = _mm512_add_ps(cy_mul[1], window_y_vec);
+            cy[2] = _mm512_add_ps(cy_mul[2], window_y_vec);
+            cy[3] = _mm512_add_ps(cy_mul[3], window_y_vec);
+            // cy[4] = _mm512_add_ps(cy_mul[4], window_y_vec);
+            // cy[5] = _mm512_add_ps(cy_mul[5], window_y_vec);
+            // cy[6] = _mm512_add_ps(cy_mul[6], window_y_vec);
+            // cy[7] = _mm512_add_ps(cy_mul[7], window_y_vec);
+
             x2[0] = _mm512_set1_ps(0);
+            x2[1] = _mm512_set1_ps(0);
+            x2[2] = _mm512_set1_ps(0);
+            x2[3] = _mm512_set1_ps(0);
+            // x2[4] = _mm512_set1_ps(0);
+            // x2[5] = _mm512_set1_ps(0);
+            // x2[6] = _mm512_set1_ps(0);
+            // x2[7] = _mm512_set1_ps(0);
+
             y2[0] = _mm512_set1_ps(0);
+            y2[1] = _mm512_set1_ps(0);
+            y2[2] = _mm512_set1_ps(0);
+            y2[3] = _mm512_set1_ps(0);
+            // y2[4] = _mm512_set1_ps(0);
+            // y2[5] = _mm512_set1_ps(0);
+            // y2[6] = _mm512_set1_ps(0);
+            // y2[7] = _mm512_set1_ps(0);
+
             w[0] = _mm512_set1_ps(0);
+            w[1] = _mm512_set1_ps(0);
+            w[2] = _mm512_set1_ps(0);
+            w[3] = _mm512_set1_ps(0);
+            // w[4] = _mm512_set1_ps(0);
+            // w[5] = _mm512_set1_ps(0);
+            // w[6] = _mm512_set1_ps(0);
+            // w[7] = _mm512_set1_ps(0);
+
             iters[0] = _mm512_set1_epi32(0);
+            iters[1] = _mm512_set1_epi32(0);
+            iters[2] = _mm512_set1_epi32(0);
+            iters[3] = _mm512_set1_epi32(0);
+            // iters[4] = _mm512_set1_epi32(0);
+            // iters[5] = _mm512_set1_epi32(0);
+            // iters[6] = _mm512_set1_epi32(0);
+            // iters[7] = _mm512_set1_epi32(0);
+
             x2_y2_sum[0] = _mm512_add_ps(x2[0], y2[0]);
+            x2_y2_sum[1] = _mm512_add_ps(x2[1], y2[1]);
+            x2_y2_sum[2] = _mm512_add_ps(x2[2], y2[2]);
+            x2_y2_sum[3] = _mm512_add_ps(x2[3], y2[3]);
+            // x2_y2_sum[4] = _mm512_add_ps(x2[4], y2[4]);
+            // x2_y2_sum[5] = _mm512_add_ps(x2[5], y2[5]);
+            // x2_y2_sum[6] = _mm512_add_ps(x2[6], y2[6]);
+            // x2_y2_sum[7] = _mm512_add_ps(x2[7], y2[7]);
+
             less_than_four[0] = _mm512_cmp_ps_mask(x2_y2_sum[0], four_vec, 2);
-            less_than_max_iters[0] = _mm512_cmp_epi32_mask(iters[0], max_iters_vec, 1);
-            active_mask[0] = _kand_mask16(less_than_four[0], less_than_max_iters[0]);
-            while (active_mask[0]) {
+            less_than_four[1] = _mm512_cmp_ps_mask(x2_y2_sum[1], four_vec, 2);
+            less_than_four[2] = _mm512_cmp_ps_mask(x2_y2_sum[2], four_vec, 2);
+            less_than_four[3] = _mm512_cmp_ps_mask(x2_y2_sum[3], four_vec, 2);
+            // less_than_four[4] = _mm512_cmp_ps_mask(x2_y2_sum[4], four_vec, 2);
+            // less_than_four[5] = _mm512_cmp_ps_mask(x2_y2_sum[5], four_vec, 2);
+            // less_than_four[6] = _mm512_cmp_ps_mask(x2_y2_sum[6], four_vec, 2);
+            // less_than_four[7] = _mm512_cmp_ps_mask(x2_y2_sum[7], four_vec, 2);
+
+            int iter = 0;
+            while (iter < max_iters) {
                 _x[0] = _mm512_sub_ps(x2[0], y2[0]);
-                x[0] = _mm512_add_ps(_x[0], cx[0]);
+                _x[1] = _mm512_sub_ps(x2[1], y2[1]);
+                _x[2] = _mm512_sub_ps(x2[2], y2[2]);
+                _x[3] = _mm512_sub_ps(x2[3], y2[3]);
+                // _x[4] = _mm512_sub_ps(x2[4], y2[4]);
+                // _x[5] = _mm512_sub_ps(x2[5], y2[5]);
+                // _x[6] = _mm512_sub_ps(x2[6], y2[6]);
+                // _x[7] = _mm512_sub_ps(x2[7], y2[7]);
+
+                x[0] = _mm512_add_ps(_x[0], cx);
+                x[1] = _mm512_add_ps(_x[1], cx);
+                x[2] = _mm512_add_ps(_x[2], cx);
+                x[3] = _mm512_add_ps(_x[3], cx);
+                // x[4] = _mm512_add_ps(_x[4], cx);
+                // x[5] = _mm512_add_ps(_x[5], cx);
+                // x[6] = _mm512_add_ps(_x[6], cx);
+                // x[7] = _mm512_add_ps(_x[7], cx);
+
                 _y[0] = _mm512_sub_ps(w[0], x2_y2_sum[0]);
+                _y[1] = _mm512_sub_ps(w[1], x2_y2_sum[1]);
+                _y[2] = _mm512_sub_ps(w[2], x2_y2_sum[2]);
+                _y[3] = _mm512_sub_ps(w[3], x2_y2_sum[3]);
+                // _y[4] = _mm512_sub_ps(w[4], x2_y2_sum[4]);
+                // _y[5] = _mm512_sub_ps(w[5], x2_y2_sum[5]);
+                // _y[6] = _mm512_sub_ps(w[6], x2_y2_sum[6]);
+                // _y[7] = _mm512_sub_ps(w[7], x2_y2_sum[7]);
+
                 y[0] = _mm512_add_ps(_y[0], cy[0]);
+                y[1] = _mm512_add_ps(_y[1], cy[1]);
+                y[2] = _mm512_add_ps(_y[2], cy[2]);
+                y[3] = _mm512_add_ps(_y[3], cy[3]);
+                // y[4] = _mm512_add_ps(_y[4], cy[4]);
+                // y[5] = _mm512_add_ps(_y[5], cy[5]);
+                // y[6] = _mm512_add_ps(_y[6], cy[6]);
+                // y[7] = _mm512_add_ps(_y[7], cy[7]);
 
                 x2[0] = _mm512_mul_ps(x[0], x[0]);
+                x2[1] = _mm512_mul_ps(x[1], x[1]);
+                x2[2] = _mm512_mul_ps(x[2], x[2]);
+                x2[3] = _mm512_mul_ps(x[3], x[3]);
+                // x2[4] = _mm512_mul_ps(x[4], x[4]);
+                // x2[5] = _mm512_mul_ps(x[5], x[5]);
+                // x2[6] = _mm512_mul_ps(x[6], x[6]);
+                // x2[7] = _mm512_mul_ps(x[7], x[7]);
+
                 y2[0] = _mm512_mul_ps(y[0], y[0]);
+                y2[1] = _mm512_mul_ps(y[1], y[1]);
+                y2[2] = _mm512_mul_ps(y[2], y[2]);
+                y2[3] = _mm512_mul_ps(y[3], y[3]);
+                // y2[4] = _mm512_mul_ps(y[4], y[4]);
+                // y2[5] = _mm512_mul_ps(y[5], y[5]);
+                // y2[6] = _mm512_mul_ps(y[6], y[6]);
+                // y2[7] = _mm512_mul_ps(y[7], y[7]);
+
                 z[0] = _mm512_add_ps(x[0], y[0]);
+                z[1] = _mm512_add_ps(x[1], y[1]);
+                z[2] = _mm512_add_ps(x[2], y[2]);
+                z[3] = _mm512_add_ps(x[3], y[3]);
+                // z[4] = _mm512_add_ps(x[4], y[4]);
+                // z[5] = _mm512_add_ps(x[5], y[5]);
+                // z[6] = _mm512_add_ps(x[6], y[6]);
+                // z[7] = _mm512_add_ps(x[7], y[7]);
+
                 w[0] = _mm512_mul_ps(z[0], z[0]);
+                w[1] = _mm512_mul_ps(z[1], z[1]);
+                w[2] = _mm512_mul_ps(z[2], z[2]);
+                w[3] = _mm512_mul_ps(z[3], z[3]);
+                // w[4] = _mm512_mul_ps(z[4], z[4]);
+                // w[5] = _mm512_mul_ps(z[5], z[5]);
+                // w[6] = _mm512_mul_ps(z[6], z[6]);
+                // w[7] = _mm512_mul_ps(z[7], z[7]);
 
                 // inc loop bounds
-                iters[0] = _mm512_mask_add_epi32(iters[0], active_mask[0], iters[0], _mm512_set1_epi32(1));
+                iters[0] = _mm512_mask_add_epi32(iters[0], less_than_four[0], iters[0], _mm512_set1_epi32(1));
+                iters[1] = _mm512_mask_add_epi32(iters[1], less_than_four[1], iters[1], _mm512_set1_epi32(1));
+                iters[2] = _mm512_mask_add_epi32(iters[2], less_than_four[2], iters[2], _mm512_set1_epi32(1));
+                iters[3] = _mm512_mask_add_epi32(iters[3], less_than_four[3], iters[3], _mm512_set1_epi32(1));
+                // iters[4] = _mm512_mask_add_epi32(iters[4], less_than_four[4], iters[4], _mm512_set1_epi32(1));
+                // iters[5] = _mm512_mask_add_epi32(iters[5], less_than_four[5], iters[5], _mm512_set1_epi32(1));
+                // iters[6] = _mm512_mask_add_epi32(iters[6], less_than_four[6], iters[6], _mm512_set1_epi32(1));
+                // iters[7] = _mm512_mask_add_epi32(iters[7], less_than_four[7], iters[7], _mm512_set1_epi32(1));
 
                 // repeat the loop bound checks here
-                x2_y2_sum[0] = _mm512_mask_add_ps(x2_y2_sum[0], active_mask[0], x2[0], y2[0]);
+                x2_y2_sum[0] = _mm512_mask_add_ps(x2_y2_sum[0], less_than_four[0], x2[0], y2[0]);
+                x2_y2_sum[1] = _mm512_mask_add_ps(x2_y2_sum[1], less_than_four[1], x2[1], y2[1]);
+                x2_y2_sum[2] = _mm512_mask_add_ps(x2_y2_sum[2], less_than_four[2], x2[2], y2[2]);
+                x2_y2_sum[3] = _mm512_mask_add_ps(x2_y2_sum[3], less_than_four[3], x2[3], y2[3]);
+                // x2_y2_sum[4] = _mm512_mask_add_ps(x2_y2_sum[4], less_than_four[4], x2[4], y2[4]);
+                // x2_y2_sum[5] = _mm512_mask_add_ps(x2_y2_sum[5], less_than_four[5], x2[5], y2[5]);
+                // x2_y2_sum[6] = _mm512_mask_add_ps(x2_y2_sum[6], less_than_four[6], x2[6], y2[6]);
+                // x2_y2_sum[7] = _mm512_mask_add_ps(x2_y2_sum[7], less_than_four[7], x2[7], y2[7]);
+
                 less_than_four[0] = _mm512_cmp_ps_mask(x2_y2_sum[0], four_vec, 2);
-                less_than_max_iters[0] = _mm512_cmp_epi32_mask(iters[0], max_iters_vec, 1);
-                active_mask[0] = _kand_mask16(less_than_four[0], less_than_max_iters[0]);
+                less_than_four[1] = _mm512_cmp_ps_mask(x2_y2_sum[1], four_vec, 2);
+                less_than_four[2] = _mm512_cmp_ps_mask(x2_y2_sum[2], four_vec, 2);
+                less_than_four[3] = _mm512_cmp_ps_mask(x2_y2_sum[3], four_vec, 2);
+                // less_than_four[4] = _mm512_cmp_ps_mask(x2_y2_sum[4], four_vec, 2);
+                // less_than_four[5] = _mm512_cmp_ps_mask(x2_y2_sum[5], four_vec, 2);
+                // less_than_four[6] = _mm512_cmp_ps_mask(x2_y2_sum[6], four_vec, 2);
+                // less_than_four[7] = _mm512_cmp_ps_mask(x2_y2_sum[7], four_vec, 2);
+
+                iter++;
+                // if (!less_than_four[0] && !less_than_four[1] && !less_than_four[2] && !less_than_four[3] && !less_than_four[4] && !less_than_four[5] && !less_than_four[6] && !less_than_four[7]) {
+                if (!less_than_four[0] && !less_than_four[1] && !less_than_four[2] && !less_than_four[3]) {
+                // if (!less_than_four[0] && !less_than_four[1]) {
+                    break;
+                }
             }
             _mm512_storeu_epi32(&(out[i[0] * img_size + ch * chunk_size]), iters[0]);
-
-            i[1] = i_ch * unroll_factor + 1;
-            base_j[1] = ch * chunk_size;
-            j_vec[1] = _mm512_set_ps(base_j[1] + 15, base_j[1] + 14, base_j[1] + 13, base_j[1] + 12,
-                                        base_j[1] + 11, base_j[1] + 10, base_j[1] + 9, base_j[1] + 8,
-                                        base_j[1] + 7, base_j[1] + 6, base_j[1] + 5, base_j[1] + 4,
-                                        base_j[1] + 3, base_j[1] + 2, base_j[1] + 1, base_j[1] + 0);
-            i_vec[1] = _mm512_set1_ps(i[1]);
-            cx_div[1] = _mm512_div_ps(j_vec[1], img_size_vec);
-            cx_mul[1] = _mm512_mul_ps(cx_div[1], window_zoom_vec);
-            cx[1] = _mm512_add_ps(cx_mul[1], window_x_vec);
-            cy_div[1] = _mm512_div_ps(i_vec[1], img_size_vec);
-            cy_mul[1] = _mm512_mul_ps(cy_div[1], window_zoom_vec);
-            cy[1] = _mm512_add_ps(cy_mul[1], window_y_vec);
-            x2[1] = _mm512_set1_ps(0);
-            y2[1] = _mm512_set1_ps(0);
-            w[1] = _mm512_set1_ps(0);
-            iters[1] = _mm512_set1_epi32(0);
-            x2_y2_sum[1] = _mm512_add_ps(x2[1], y2[1]);
-            less_than_four[1] = _mm512_cmp_ps_mask(x2_y2_sum[1], four_vec, 2);
-            less_than_max_iters[1] = _mm512_cmp_epi32_mask(iters[1], max_iters_vec, 1);
-            active_mask[1] = _kand_mask16(less_than_four[1], less_than_max_iters[1]);
-            while (active_mask[1]) {
-                _x[1] = _mm512_sub_ps(x2[1], y2[1]);
-                x[1] = _mm512_add_ps(_x[1], cx[1]);
-                _y[1] = _mm512_sub_ps(w[1], x2_y2_sum[1]);
-                y[1] = _mm512_add_ps(_y[1], cy[1]);
-
-                x2[1] = _mm512_mul_ps(x[1], x[1]);
-                y2[1] = _mm512_mul_ps(y[1], y[1]);
-                z[1] = _mm512_add_ps(x[1], y[1]);
-                w[1] = _mm512_mul_ps(z[1], z[1]);
-
-                // inc loop bounds
-                iters[1] = _mm512_mask_add_epi32(iters[1], active_mask[1], iters[1], _mm512_set1_epi32(1));
-
-                // repeat the loop bound checks here
-                x2_y2_sum[1] = _mm512_mask_add_ps(x2_y2_sum[1], active_mask[1], x2[1], y2[1]);
-                less_than_four[1] = _mm512_cmp_ps_mask(x2_y2_sum[1], four_vec, 2);
-                less_than_max_iters[1] = _mm512_cmp_epi32_mask(iters[1], max_iters_vec, 1);
-                active_mask[1] = _kand_mask16(less_than_four[1], less_than_max_iters[1]);
-            }
             _mm512_storeu_epi32(&(out[i[1] * img_size + ch * chunk_size]), iters[1]);
-
-            i[2] = i_ch * unroll_factor + 2;
-            base_j[2] = ch * chunk_size;
-            j_vec[2] = _mm512_set_ps(base_j[2] + 15, base_j[2] + 14, base_j[2] + 13, base_j[2] + 12,
-                                        base_j[2] + 11, base_j[2] + 10, base_j[2] + 9, base_j[2] + 8,
-                                        base_j[2] + 7, base_j[2] + 6, base_j[2] + 5, base_j[2] + 4,
-                                        base_j[2] + 3, base_j[2] + 2, base_j[2] + 1, base_j[2] + 0);
-            i_vec[2] = _mm512_set1_ps(i[2]);
-            cx_div[2] = _mm512_div_ps(j_vec[2], img_size_vec);
-            cx_mul[2] = _mm512_mul_ps(cx_div[2], window_zoom_vec);
-            cx[2] = _mm512_add_ps(cx_mul[2], window_x_vec);
-            cy_div[2] = _mm512_div_ps(i_vec[2], img_size_vec);
-            cy_mul[2] = _mm512_mul_ps(cy_div[2], window_zoom_vec);
-            cy[2] = _mm512_add_ps(cy_mul[2], window_y_vec);
-            x2[2] = _mm512_set1_ps(0);
-            y2[2] = _mm512_set1_ps(0);
-            w[2] = _mm512_set1_ps(0);
-            iters[2] = _mm512_set1_epi32(0);
-            x2_y2_sum[2] = _mm512_add_ps(x2[2], y2[2]);
-            less_than_four[2] = _mm512_cmp_ps_mask(x2_y2_sum[2], four_vec, 2);
-            less_than_max_iters[2] = _mm512_cmp_epi32_mask(iters[2], max_iters_vec, 1);
-            active_mask[2] = _kand_mask16(less_than_four[2], less_than_max_iters[2]);
-            while (active_mask[2]) {
-                _x[2] = _mm512_sub_ps(x2[2], y2[2]);
-                x[2] = _mm512_add_ps(_x[2], cx[2]);
-                _y[2] = _mm512_sub_ps(w[2], x2_y2_sum[2]);
-                y[2] = _mm512_add_ps(_y[2], cy[2]);
-
-                x2[2] = _mm512_mul_ps(x[2], x[2]);
-                y2[2] = _mm512_mul_ps(y[2], y[2]);
-                z[2] = _mm512_add_ps(x[2], y[2]);
-                w[2] = _mm512_mul_ps(z[2], z[2]);
-
-                // inc loop bounds
-                iters[2] = _mm512_mask_add_epi32(iters[2], active_mask[2], iters[2], _mm512_set1_epi32(1));
-
-                // repeat the loop bound checks here
-                x2_y2_sum[2] = _mm512_mask_add_ps(x2_y2_sum[2], active_mask[2], x2[2], y2[2]);
-                less_than_four[2] = _mm512_cmp_ps_mask(x2_y2_sum[2], four_vec, 2);
-                less_than_max_iters[2] = _mm512_cmp_epi32_mask(iters[2], max_iters_vec, 1);
-                active_mask[2] = _kand_mask16(less_than_four[2], less_than_max_iters[2]);
-            }
             _mm512_storeu_epi32(&(out[i[2] * img_size + ch * chunk_size]), iters[2]);
-
-            i[3] = i_ch * unroll_factor + 3;
-            base_j[3] = ch * chunk_size;
-            j_vec[3] = _mm512_set_ps(base_j[3] + 15, base_j[3] + 14, base_j[3] + 13, base_j[3] + 12,
-                                        base_j[3] + 11, base_j[3] + 10, base_j[3] + 9, base_j[3] + 8,
-                                        base_j[3] + 7, base_j[3] + 6, base_j[3] + 5, base_j[3] + 4,
-                                        base_j[3] + 3, base_j[3] + 2, base_j[3] + 1, base_j[3] + 0);
-            i_vec[3] = _mm512_set1_ps(i[3]);
-            cx_div[3] = _mm512_div_ps(j_vec[3], img_size_vec);
-            cx_mul[3] = _mm512_mul_ps(cx_div[3], window_zoom_vec);
-            cx[3] = _mm512_add_ps(cx_mul[3], window_x_vec);
-            cy_div[3] = _mm512_div_ps(i_vec[3], img_size_vec);
-            cy_mul[3] = _mm512_mul_ps(cy_div[3], window_zoom_vec);
-            cy[3] = _mm512_add_ps(cy_mul[3], window_y_vec);
-            x2[3] = _mm512_set1_ps(0);
-            y2[3] = _mm512_set1_ps(0);
-            w[3] = _mm512_set1_ps(0);
-            iters[3] = _mm512_set1_epi32(0);
-            x2_y2_sum[3] = _mm512_add_ps(x2[3], y2[3]);
-            less_than_four[3] = _mm512_cmp_ps_mask(x2_y2_sum[3], four_vec, 2);
-            less_than_max_iters[3] = _mm512_cmp_epi32_mask(iters[3], max_iters_vec, 1);
-            active_mask[3] = _kand_mask16(less_than_four[3], less_than_max_iters[3]);
-            while (active_mask[3]) {
-                _x[3] = _mm512_sub_ps(x2[3], y2[3]);
-                x[3] = _mm512_add_ps(_x[3], cx[3]);
-                _y[3] = _mm512_sub_ps(w[3], x2_y2_sum[3]);
-                y[3] = _mm512_add_ps(_y[3], cy[3]);
-
-                x2[3] = _mm512_mul_ps(x[3], x[3]);
-                y2[3] = _mm512_mul_ps(y[3], y[3]);
-                z[3] = _mm512_add_ps(x[3], y[3]);
-                w[3] = _mm512_mul_ps(z[3], z[3]);
-
-                // inc loop bounds
-                iters[3] = _mm512_mask_add_epi32(iters[3], active_mask[3], iters[3], _mm512_set1_epi32(1));
-
-                // repeat the loop bound checks here
-                x2_y2_sum[3] = _mm512_mask_add_ps(x2_y2_sum[3], active_mask[3], x2[3], y2[3]);
-                less_than_four[3] = _mm512_cmp_ps_mask(x2_y2_sum[3], four_vec, 2);
-                less_than_max_iters[3] = _mm512_cmp_epi32_mask(iters[3], max_iters_vec, 1);
-                active_mask[3] = _kand_mask16(less_than_four[3], less_than_max_iters[3]);
-            }
-            _mm512_storeu_epi32(&(out[i[3] * img_size + ch * chunk_size]), iters[3]);            
+            _mm512_storeu_epi32(&(out[i[3] * img_size + ch * chunk_size]), iters[3]);  
+            // _mm512_storeu_epi32(&(out[i[4] * img_size + ch * chunk_size]), iters[4]);
+            // _mm512_storeu_epi32(&(out[i[5] * img_size + ch * chunk_size]), iters[5]);
+            // _mm512_storeu_epi32(&(out[i[6] * img_size + ch * chunk_size]), iters[6]);
+            // _mm512_storeu_epi32(&(out[i[7] * img_size + ch * chunk_size]), iters[7]);
         }
     }
 }
