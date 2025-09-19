@@ -8,6 +8,10 @@
 #include <cstdint>
 #include <immintrin.h>
 #include <pthread.h>
+#include <cassert>
+#include <cstdio>
+#include <vector>
+#include <array>
 
 constexpr float window_zoom = 1.0 / 10000.0f;
 constexpr float window_x = -0.743643887 - 0.5 * window_zoom;
@@ -47,38 +51,522 @@ uint32_t ceil_div(uint32_t a, uint32_t b) { return (a + b - 1) / b; }
 
 /// <--- your code here --->
 
-/*
-    // OPTIONAL: Uncomment this block to include your CPU vector implementation
-    // from Lab 1 for easy comparison.
-    //
-    // (If you do this, you'll need to update your code to use the new constants
-    // 'window_zoom', 'window_x', and 'window_y'.)
 
-    #define HAS_VECTOR_IMPL // <~~ keep this line if you want to benchmark the vector kernel!
+// OPTIONAL: Uncomment this block to include your CPU vector implementation
+// from Lab 1 for easy comparison.
+//
+// (If you do this, you'll need to update your code to use the new constants
+// 'window_zoom', 'window_x', and 'window_y'.)
 
-    ////////////////////////////////////////////////////////////////////////////////
-    // Vector
+#define HAS_VECTOR_IMPL // <~~ keep this line if you want to benchmark the vector kernel!
 
-    void mandelbrot_cpu_vector(uint32_t img_size, uint32_t max_iters, uint32_t *out) {
-        // your code here...
+////////////////////////////////////////////////////////////////////////////////
+// Vector
+
+// void mandelbrot_cpu_vector(uint32_t img_size, uint32_t max_iters, uint32_t *out) {
+//     uint32_t chunk_size = 16;
+//     assert(img_size % chunk_size == 0);
+//     uint32_t num_chunks = img_size / chunk_size;
+
+//     __m512 img_size_vec = _mm512_set1_ps(img_size);
+//     __m512 window_zoom_vec = _mm512_set1_ps(window_zoom);
+//     __m512 window_x_vec = _mm512_set1_ps(window_x);
+//     __m512 window_y_vec = _mm512_set1_ps(window_y);
+//     __m512i max_iters_vec = _mm512_set1_epi32(max_iters);
+//     for (uint64_t i = 0; i < img_size; i++) {
+// 	    for (uint64_t ch = 0; ch < num_chunks; ch++) {
+//             uint32_t base_j = ch * chunk_size;
+// 		    __m512 j_vec = _mm512_set_ps(base_j + 15, base_j + 14, base_j + 13, base_j + 12,
+//                                         base_j + 11, base_j + 10, base_j + 9, base_j + 8,
+//                                         base_j + 7, base_j + 6, base_j + 5, base_j + 4,
+//                                         base_j + 3, base_j + 2, base_j + 1, base_j + 0);
+// 		    __m512 i_vec = _mm512_set1_ps(i);
+// 		    __m512 cx_div = _mm512_div_ps(j_vec, img_size_vec);
+// 		    __m512 cx_mul = _mm512_mul_ps(cx_div, window_zoom_vec);
+// 		    __m512 cx = _mm512_add_ps(cx_mul, window_x_vec);
+// 		    __m512 cy_div = _mm512_div_ps(i_vec, img_size_vec);
+// 		    __m512 cy_mul = _mm512_mul_ps(cy_div, window_zoom_vec);
+// 		    __m512 cy = _mm512_add_ps(cy_mul, window_y_vec);
+
+// 		    __m512 x2 = _mm512_set1_ps(0);
+// 		    __m512 y2 = _mm512_set1_ps(0);
+// 		    __m512 w = _mm512_set1_ps(0);
+// 		    __m512i iters = _mm512_set1_epi32(0);
+
+// 		    __m512 x2_y2_sum = _mm512_add_ps(x2, y2);
+// 		    __m512 four_vec = _mm512_set1_ps(4.0f);
+// 		    __mmask16 less_than_four = _mm512_cmp_ps_mask(x2_y2_sum, four_vec, 2);
+//             __mmask16 less_than_max_iters = _mm512_cmp_epi32_mask(iters, max_iters_vec, 1);
+//             __mmask16 active_mask = _kand_mask16(less_than_four, less_than_max_iters);
+
+//             while (active_mask) {
+//                 __m512 _x = _mm512_sub_ps(x2, y2);
+//                 __m512 x = _mm512_add_ps(_x, cx);
+//                 __m512 _y = _mm512_sub_ps(w, x2_y2_sum);
+//                 __m512 y = _mm512_add_ps(_y, cy);
+
+//                 x2 = _mm512_mul_ps(x, x);
+//                 y2 = _mm512_mul_ps(y, y);
+//                 __m512 z = _mm512_add_ps(x, y);
+//                 w = _mm512_mul_ps(z, z);
+
+//                 // inc loop bounds
+//                 iters = _mm512_mask_add_epi32(iters, active_mask, iters, _mm512_set1_epi32(1));
+
+//                 // repeat the loop bound checks here
+//                 x2_y2_sum = _mm512_mask_add_ps(x2_y2_sum, active_mask, x2, y2);
+//                 less_than_four = _mm512_cmp_ps_mask(x2_y2_sum, four_vec, 2);
+//                 less_than_max_iters = _mm512_cmp_epi32_mask(iters, max_iters_vec, 1);
+//                 active_mask = _kand_mask16(less_than_four, less_than_max_iters);
+//             }
+
+//             _mm512_storeu_epi32(&(out[i * img_size + ch * chunk_size]), iters);
+
+// 		}
+//     }
+// }
+
+void mandelbrot_cpu_vector(uint32_t img_size, uint32_t max_iters, uint32_t *out) {
+    uint32_t chunk_size = 16;
+    assert(img_size % chunk_size == 0);
+    uint32_t num_chunks = img_size / chunk_size;
+
+    __m512 img_size_vec = _mm512_set1_ps(img_size);
+    __m512 window_zoom_vec = _mm512_set1_ps(window_zoom);
+    __m512 window_x_vec = _mm512_set1_ps(window_x);
+    __m512 window_y_vec = _mm512_set1_ps(window_y);
+    __m512i max_iters_vec = _mm512_set1_epi32(max_iters);
+    __m512 four_vec = _mm512_set1_ps(4.0f);
+
+    for (uint64_t ch = 0; ch < num_chunks; ch++) {
+        uint32_t base_j = ch * chunk_size;
+        __m512 j_vec = _mm512_set_ps(base_j + 15, base_j + 14, base_j + 13, base_j + 12,
+                                    base_j + 11, base_j + 10, base_j + 9, base_j + 8,
+                                    base_j + 7, base_j + 6, base_j + 5, base_j + 4,
+                                    base_j + 3, base_j + 2, base_j + 1, base_j + 0);
+        __m512 cx_div = _mm512_div_ps(j_vec, img_size_vec);
+        __m512 cx_mul = _mm512_mul_ps(cx_div, window_zoom_vec);
+        __m512 cx = _mm512_add_ps(cx_mul, window_x_vec);
+
+        for (uint64_t i = 0; i < img_size; i++) {
+		    __m512 i_vec = _mm512_set1_ps(i);
+		    __m512 cy_div = _mm512_div_ps(i_vec, img_size_vec);
+		    __m512 cy_mul = _mm512_mul_ps(cy_div, window_zoom_vec);
+		    __m512 cy = _mm512_add_ps(cy_mul, window_y_vec);
+
+            __m512 x2 = _mm512_set1_ps(0);
+            __m512 y2 = _mm512_set1_ps(0);
+            __m512 w = _mm512_set1_ps(0);
+            __m512i iters = _mm512_set1_epi32(0);
+		    __m512 x2_y2_sum = _mm512_add_ps(x2, y2);
+		    __mmask16 less_than_four = _mm512_cmp_ps_mask(x2_y2_sum, four_vec, 2);
+            __mmask16 less_than_max_iters = _mm512_cmp_epi32_mask(iters, max_iters_vec, 1);
+            __mmask16 active_mask = _kand_mask16(less_than_four, less_than_max_iters);
+
+            while (active_mask) {
+                __m512 _x = _mm512_sub_ps(x2, y2);
+                __m512 x = _mm512_add_ps(_x, cx);
+                __m512 _y = _mm512_sub_ps(w, x2_y2_sum);
+                __m512 y = _mm512_add_ps(_y, cy);
+
+                x2 = _mm512_mul_ps(x, x);
+                y2 = _mm512_mul_ps(y, y);
+                __m512 z = _mm512_add_ps(x, y);
+                w = _mm512_mul_ps(z, z);
+
+                // inc loop bounds
+                iters = _mm512_mask_add_epi32(iters, active_mask, iters, _mm512_set1_epi32(1));
+
+                // repeat the loop bound checks here
+                x2_y2_sum = _mm512_mask_add_ps(x2_y2_sum, active_mask, x2, y2);
+                less_than_four = _mm512_cmp_ps_mask(x2_y2_sum, four_vec, 2);
+                less_than_max_iters = _mm512_cmp_epi32_mask(iters, max_iters_vec, 1);
+                active_mask = _kand_mask16(less_than_four, less_than_max_iters);
+            }
+
+            _mm512_storeu_epi32(&(out[i * img_size + ch * chunk_size]), iters);
+
+		}
     }
-*/
+}
+
 
 ////////////////////////////////////////////////////////////////////////////////
 // Vector + ILP
 
 void mandelbrot_cpu_vector_ilp(uint32_t img_size, uint32_t max_iters, uint32_t *out) {
-    // TODO: Implement this function.
+    uint32_t chunk_size = 16;
+    assert(img_size % chunk_size == 0);
+    uint32_t num_chunks = img_size / chunk_size;
+
+    // constexpr int unroll_factor = 2;
+    # define unroll_factor 4
+
+    __m512 img_size_vec = _mm512_set1_ps(img_size);
+    __m512 window_zoom_vec = _mm512_set1_ps(window_zoom);
+    __m512 window_x_vec = _mm512_set1_ps(window_x);
+    __m512 window_y_vec = _mm512_set1_ps(window_y);
+    __m512i max_iters_vec = _mm512_set1_epi32(max_iters);
+    __m512 four_vec = _mm512_set1_ps(4.0f);
+
+    std::array<__m512, unroll_factor> j_vec;
+    std::array<__m512, unroll_factor> i_vec;
+    std::array<__m512, unroll_factor> cx_div;
+    std::array<__m512, unroll_factor> cx_mul;
+    std::array<__m512, unroll_factor> cx;
+    std::array<__m512, unroll_factor> cy_div;
+    std::array<__m512, unroll_factor> cy_mul;
+    std::array<__m512, unroll_factor> cy;
+    std::array<__m512, unroll_factor> x2;
+    std::array<__m512, unroll_factor> y2;
+    std::array<__m512, unroll_factor> w;
+    std::array<__m512i, unroll_factor> iters;
+    std::array<__m512, unroll_factor> x2_y2_sum;
+    std::array<__mmask16, unroll_factor> less_than_four;
+    std::array<__mmask16, unroll_factor> less_than_max_iters;
+    std::array<__mmask16, unroll_factor> active_mask;
+    std::array<__m512, unroll_factor> _x;
+    std::array<__m512, unroll_factor> x;
+    std::array<__m512, unroll_factor> _y;
+    std::array<__m512, unroll_factor> y;
+    std::array<__m512, unroll_factor> z;
+    std::array<uint64_t, unroll_factor> i;
+    std::array<uint32_t, unroll_factor> base_j;
+
+    assert(img_size % unroll_factor == 0);
+    uint64_t num_unrolled_iters = img_size / unroll_factor;
+
+    for (uint64_t i_ch = 0; i_ch < num_unrolled_iters; i_ch++) {
+
+        for (uint64_t ch = 0; ch < num_chunks; ch++) {
+
+            // #pragma clang loop unroll(enable)
+            // for (uint64_t i_offset = 0; i_offset < unroll_factor; i_offset++) {
+            //     i[i_offset] = i_ch * unroll_factor + i_offset;
+
+            //     base_j[i_offset] = ch * chunk_size;
+            //     j_vec[i_offset] = _mm512_set_ps(base_j[i_offset] + 15, base_j[i_offset] + 14, base_j[i_offset] + 13, base_j[i_offset] + 12,
+            //                                 base_j[i_offset] + 11, base_j[i_offset] + 10, base_j[i_offset] + 9, base_j[i_offset] + 8,
+            //                                 base_j[i_offset] + 7, base_j[i_offset] + 6, base_j[i_offset] + 5, base_j[i_offset] + 4,
+            //                                 base_j[i_offset] + 3, base_j[i_offset] + 2, base_j[i_offset] + 1, base_j[i_offset] + 0);
+            //     i_vec[i_offset] = _mm512_set1_ps(i[i_offset]);
+            //     cx_div[i_offset] = _mm512_div_ps(j_vec[i_offset], img_size_vec);
+            //     cx_mul[i_offset] = _mm512_mul_ps(cx_div[i_offset], window_zoom_vec);
+            //     cx[i_offset] = _mm512_add_ps(cx_mul[i_offset], window_x_vec);
+            //     cy_div[i_offset] = _mm512_div_ps(i_vec[i_offset], img_size_vec);
+            //     cy_mul[i_offset] = _mm512_mul_ps(cy_div[i_offset], window_zoom_vec);
+            //     cy[i_offset] = _mm512_add_ps(cy_mul[i_offset], window_y_vec);
+
+            //     x2[i_offset] = _mm512_set1_ps(0);
+            //     y2[i_offset] = _mm512_set1_ps(0);
+            //     w[i_offset] = _mm512_set1_ps(0);
+            //     iters[i_offset] = _mm512_set1_epi32(0);
+
+            //     x2_y2_sum[i_offset] = _mm512_add_ps(x2[i_offset], y2[i_offset]);
+            //     less_than_four[i_offset] = _mm512_cmp_ps_mask(x2_y2_sum[i_offset], four_vec, 2);
+            //     less_than_max_iters[i_offset] = _mm512_cmp_epi32_mask(iters[i_offset], max_iters_vec, 1);
+            //     active_mask[i_offset] = _kand_mask16(less_than_four[i_offset], less_than_max_iters[i_offset]);
+
+            //     while (active_mask[i_offset]) {
+            //         _x[i_offset] = _mm512_sub_ps(x2[i_offset], y2[i_offset]);
+            //         x[i_offset] = _mm512_add_ps(_x[i_offset], cx[i_offset]);
+            //         _y[i_offset] = _mm512_sub_ps(w[i_offset], x2_y2_sum[i_offset]);
+            //         y[i_offset] = _mm512_add_ps(_y[i_offset], cy[i_offset]);
+
+            //         x2[i_offset] = _mm512_mul_ps(x[i_offset], x[i_offset]);
+            //         y2[i_offset] = _mm512_mul_ps(y[i_offset], y[i_offset]);
+            //         z[i_offset] = _mm512_add_ps(x[i_offset], y[i_offset]);
+            //         w[i_offset] = _mm512_mul_ps(z[i_offset], z[i_offset]);
+
+            //         // inc loop bounds
+            //         iters[i_offset] = _mm512_mask_add_epi32(iters[i_offset], active_mask[i_offset], iters[i_offset], _mm512_set1_epi32(1));
+
+            //         // repeat the loop bound checks here
+            //         x2_y2_sum[i_offset] = _mm512_mask_add_ps(x2_y2_sum[i_offset], active_mask[i_offset], x2[i_offset], y2[i_offset]);
+            //         less_than_four[i_offset] = _mm512_cmp_ps_mask(x2_y2_sum[i_offset], four_vec, 2);
+            //         less_than_max_iters[i_offset] = _mm512_cmp_epi32_mask(iters[i_offset], max_iters_vec, 1);
+            //         active_mask[i_offset] = _kand_mask16(less_than_four[i_offset], less_than_max_iters[i_offset]);
+            //     }
+
+            //     _mm512_storeu_epi32(&(out[i[i_offset] * img_size + ch * chunk_size]), iters[i_offset]);
+            // }
+
+            i[0] = i_ch * unroll_factor + 0;
+            base_j[0] = ch * chunk_size;
+            j_vec[0] = _mm512_set_ps(base_j[0] + 15, base_j[0] + 14, base_j[0] + 13, base_j[0] + 12,
+                                        base_j[0] + 11, base_j[0] + 10, base_j[0] + 9, base_j[0] + 8,
+                                        base_j[0] + 7, base_j[0] + 6, base_j[0] + 5, base_j[0] + 4,
+                                        base_j[0] + 3, base_j[0] + 2, base_j[0] + 1, base_j[0] + 0);
+            i_vec[0] = _mm512_set1_ps(i[0]);
+            cx_div[0] = _mm512_div_ps(j_vec[0], img_size_vec);
+            cx_mul[0] = _mm512_mul_ps(cx_div[0], window_zoom_vec);
+            cx[0] = _mm512_add_ps(cx_mul[0], window_x_vec);
+            cy_div[0] = _mm512_div_ps(i_vec[0], img_size_vec);
+            cy_mul[0] = _mm512_mul_ps(cy_div[0], window_zoom_vec);
+            cy[0] = _mm512_add_ps(cy_mul[0], window_y_vec);
+            x2[0] = _mm512_set1_ps(0);
+            y2[0] = _mm512_set1_ps(0);
+            w[0] = _mm512_set1_ps(0);
+            iters[0] = _mm512_set1_epi32(0);
+            x2_y2_sum[0] = _mm512_add_ps(x2[0], y2[0]);
+            less_than_four[0] = _mm512_cmp_ps_mask(x2_y2_sum[0], four_vec, 2);
+            less_than_max_iters[0] = _mm512_cmp_epi32_mask(iters[0], max_iters_vec, 1);
+            active_mask[0] = _kand_mask16(less_than_four[0], less_than_max_iters[0]);
+            while (active_mask[0]) {
+                _x[0] = _mm512_sub_ps(x2[0], y2[0]);
+                x[0] = _mm512_add_ps(_x[0], cx[0]);
+                _y[0] = _mm512_sub_ps(w[0], x2_y2_sum[0]);
+                y[0] = _mm512_add_ps(_y[0], cy[0]);
+
+                x2[0] = _mm512_mul_ps(x[0], x[0]);
+                y2[0] = _mm512_mul_ps(y[0], y[0]);
+                z[0] = _mm512_add_ps(x[0], y[0]);
+                w[0] = _mm512_mul_ps(z[0], z[0]);
+
+                // inc loop bounds
+                iters[0] = _mm512_mask_add_epi32(iters[0], active_mask[0], iters[0], _mm512_set1_epi32(1));
+
+                // repeat the loop bound checks here
+                x2_y2_sum[0] = _mm512_mask_add_ps(x2_y2_sum[0], active_mask[0], x2[0], y2[0]);
+                less_than_four[0] = _mm512_cmp_ps_mask(x2_y2_sum[0], four_vec, 2);
+                less_than_max_iters[0] = _mm512_cmp_epi32_mask(iters[0], max_iters_vec, 1);
+                active_mask[0] = _kand_mask16(less_than_four[0], less_than_max_iters[0]);
+            }
+            _mm512_storeu_epi32(&(out[i[0] * img_size + ch * chunk_size]), iters[0]);
+
+            i[1] = i_ch * unroll_factor + 1;
+            base_j[1] = ch * chunk_size;
+            j_vec[1] = _mm512_set_ps(base_j[1] + 15, base_j[1] + 14, base_j[1] + 13, base_j[1] + 12,
+                                        base_j[1] + 11, base_j[1] + 10, base_j[1] + 9, base_j[1] + 8,
+                                        base_j[1] + 7, base_j[1] + 6, base_j[1] + 5, base_j[1] + 4,
+                                        base_j[1] + 3, base_j[1] + 2, base_j[1] + 1, base_j[1] + 0);
+            i_vec[1] = _mm512_set1_ps(i[1]);
+            cx_div[1] = _mm512_div_ps(j_vec[1], img_size_vec);
+            cx_mul[1] = _mm512_mul_ps(cx_div[1], window_zoom_vec);
+            cx[1] = _mm512_add_ps(cx_mul[1], window_x_vec);
+            cy_div[1] = _mm512_div_ps(i_vec[1], img_size_vec);
+            cy_mul[1] = _mm512_mul_ps(cy_div[1], window_zoom_vec);
+            cy[1] = _mm512_add_ps(cy_mul[1], window_y_vec);
+            x2[1] = _mm512_set1_ps(0);
+            y2[1] = _mm512_set1_ps(0);
+            w[1] = _mm512_set1_ps(0);
+            iters[1] = _mm512_set1_epi32(0);
+            x2_y2_sum[1] = _mm512_add_ps(x2[1], y2[1]);
+            less_than_four[1] = _mm512_cmp_ps_mask(x2_y2_sum[1], four_vec, 2);
+            less_than_max_iters[1] = _mm512_cmp_epi32_mask(iters[1], max_iters_vec, 1);
+            active_mask[1] = _kand_mask16(less_than_four[1], less_than_max_iters[1]);
+            while (active_mask[1]) {
+                _x[1] = _mm512_sub_ps(x2[1], y2[1]);
+                x[1] = _mm512_add_ps(_x[1], cx[1]);
+                _y[1] = _mm512_sub_ps(w[1], x2_y2_sum[1]);
+                y[1] = _mm512_add_ps(_y[1], cy[1]);
+
+                x2[1] = _mm512_mul_ps(x[1], x[1]);
+                y2[1] = _mm512_mul_ps(y[1], y[1]);
+                z[1] = _mm512_add_ps(x[1], y[1]);
+                w[1] = _mm512_mul_ps(z[1], z[1]);
+
+                // inc loop bounds
+                iters[1] = _mm512_mask_add_epi32(iters[1], active_mask[1], iters[1], _mm512_set1_epi32(1));
+
+                // repeat the loop bound checks here
+                x2_y2_sum[1] = _mm512_mask_add_ps(x2_y2_sum[1], active_mask[1], x2[1], y2[1]);
+                less_than_four[1] = _mm512_cmp_ps_mask(x2_y2_sum[1], four_vec, 2);
+                less_than_max_iters[1] = _mm512_cmp_epi32_mask(iters[1], max_iters_vec, 1);
+                active_mask[1] = _kand_mask16(less_than_four[1], less_than_max_iters[1]);
+            }
+            _mm512_storeu_epi32(&(out[i[1] * img_size + ch * chunk_size]), iters[1]);
+
+            i[2] = i_ch * unroll_factor + 2;
+            base_j[2] = ch * chunk_size;
+            j_vec[2] = _mm512_set_ps(base_j[2] + 15, base_j[2] + 14, base_j[2] + 13, base_j[2] + 12,
+                                        base_j[2] + 11, base_j[2] + 10, base_j[2] + 9, base_j[2] + 8,
+                                        base_j[2] + 7, base_j[2] + 6, base_j[2] + 5, base_j[2] + 4,
+                                        base_j[2] + 3, base_j[2] + 2, base_j[2] + 1, base_j[2] + 0);
+            i_vec[2] = _mm512_set1_ps(i[2]);
+            cx_div[2] = _mm512_div_ps(j_vec[2], img_size_vec);
+            cx_mul[2] = _mm512_mul_ps(cx_div[2], window_zoom_vec);
+            cx[2] = _mm512_add_ps(cx_mul[2], window_x_vec);
+            cy_div[2] = _mm512_div_ps(i_vec[2], img_size_vec);
+            cy_mul[2] = _mm512_mul_ps(cy_div[2], window_zoom_vec);
+            cy[2] = _mm512_add_ps(cy_mul[2], window_y_vec);
+            x2[2] = _mm512_set1_ps(0);
+            y2[2] = _mm512_set1_ps(0);
+            w[2] = _mm512_set1_ps(0);
+            iters[2] = _mm512_set1_epi32(0);
+            x2_y2_sum[2] = _mm512_add_ps(x2[2], y2[2]);
+            less_than_four[2] = _mm512_cmp_ps_mask(x2_y2_sum[2], four_vec, 2);
+            less_than_max_iters[2] = _mm512_cmp_epi32_mask(iters[2], max_iters_vec, 1);
+            active_mask[2] = _kand_mask16(less_than_four[2], less_than_max_iters[2]);
+            while (active_mask[2]) {
+                _x[2] = _mm512_sub_ps(x2[2], y2[2]);
+                x[2] = _mm512_add_ps(_x[2], cx[2]);
+                _y[2] = _mm512_sub_ps(w[2], x2_y2_sum[2]);
+                y[2] = _mm512_add_ps(_y[2], cy[2]);
+
+                x2[2] = _mm512_mul_ps(x[2], x[2]);
+                y2[2] = _mm512_mul_ps(y[2], y[2]);
+                z[2] = _mm512_add_ps(x[2], y[2]);
+                w[2] = _mm512_mul_ps(z[2], z[2]);
+
+                // inc loop bounds
+                iters[2] = _mm512_mask_add_epi32(iters[2], active_mask[2], iters[2], _mm512_set1_epi32(1));
+
+                // repeat the loop bound checks here
+                x2_y2_sum[2] = _mm512_mask_add_ps(x2_y2_sum[2], active_mask[2], x2[2], y2[2]);
+                less_than_four[2] = _mm512_cmp_ps_mask(x2_y2_sum[2], four_vec, 2);
+                less_than_max_iters[2] = _mm512_cmp_epi32_mask(iters[2], max_iters_vec, 1);
+                active_mask[2] = _kand_mask16(less_than_four[2], less_than_max_iters[2]);
+            }
+            _mm512_storeu_epi32(&(out[i[2] * img_size + ch * chunk_size]), iters[2]);
+
+            i[3] = i_ch * unroll_factor + 3;
+            base_j[3] = ch * chunk_size;
+            j_vec[3] = _mm512_set_ps(base_j[3] + 15, base_j[3] + 14, base_j[3] + 13, base_j[3] + 12,
+                                        base_j[3] + 11, base_j[3] + 10, base_j[3] + 9, base_j[3] + 8,
+                                        base_j[3] + 7, base_j[3] + 6, base_j[3] + 5, base_j[3] + 4,
+                                        base_j[3] + 3, base_j[3] + 2, base_j[3] + 1, base_j[3] + 0);
+            i_vec[3] = _mm512_set1_ps(i[3]);
+            cx_div[3] = _mm512_div_ps(j_vec[3], img_size_vec);
+            cx_mul[3] = _mm512_mul_ps(cx_div[3], window_zoom_vec);
+            cx[3] = _mm512_add_ps(cx_mul[3], window_x_vec);
+            cy_div[3] = _mm512_div_ps(i_vec[3], img_size_vec);
+            cy_mul[3] = _mm512_mul_ps(cy_div[3], window_zoom_vec);
+            cy[3] = _mm512_add_ps(cy_mul[3], window_y_vec);
+            x2[3] = _mm512_set1_ps(0);
+            y2[3] = _mm512_set1_ps(0);
+            w[3] = _mm512_set1_ps(0);
+            iters[3] = _mm512_set1_epi32(0);
+            x2_y2_sum[3] = _mm512_add_ps(x2[3], y2[3]);
+            less_than_four[3] = _mm512_cmp_ps_mask(x2_y2_sum[3], four_vec, 2);
+            less_than_max_iters[3] = _mm512_cmp_epi32_mask(iters[3], max_iters_vec, 1);
+            active_mask[3] = _kand_mask16(less_than_four[3], less_than_max_iters[3]);
+            while (active_mask[3]) {
+                _x[3] = _mm512_sub_ps(x2[3], y2[3]);
+                x[3] = _mm512_add_ps(_x[3], cx[3]);
+                _y[3] = _mm512_sub_ps(w[3], x2_y2_sum[3]);
+                y[3] = _mm512_add_ps(_y[3], cy[3]);
+
+                x2[3] = _mm512_mul_ps(x[3], x[3]);
+                y2[3] = _mm512_mul_ps(y[3], y[3]);
+                z[3] = _mm512_add_ps(x[3], y[3]);
+                w[3] = _mm512_mul_ps(z[3], z[3]);
+
+                // inc loop bounds
+                iters[3] = _mm512_mask_add_epi32(iters[3], active_mask[3], iters[3], _mm512_set1_epi32(1));
+
+                // repeat the loop bound checks here
+                x2_y2_sum[3] = _mm512_mask_add_ps(x2_y2_sum[3], active_mask[3], x2[3], y2[3]);
+                less_than_four[3] = _mm512_cmp_ps_mask(x2_y2_sum[3], four_vec, 2);
+                less_than_max_iters[3] = _mm512_cmp_epi32_mask(iters[3], max_iters_vec, 1);
+                active_mask[3] = _kand_mask16(less_than_four[3], less_than_max_iters[3]);
+            }
+            _mm512_storeu_epi32(&(out[i[3] * img_size + ch * chunk_size]), iters[3]);            
+        }
+    }
 }
 
 ////////////////////////////////////////////////////////////////////////////////
 // Vector + Multi-core
 
-void mandelbrot_cpu_vector_multicore(
-    uint32_t img_size,
-    uint32_t max_iters,
-    uint32_t *out) {
-    // TODO: Implement this function.
+typedef struct {
+    uint32_t img_size;
+    uint32_t max_iters;
+    uint32_t *out;
+    uint64_t thread_idx;
+    int num_threads;
+} mandelbrot_thread_data_t;
+
+void* mandelbrot_cpu_vector_chunk_helper(void* arg) {
+    mandelbrot_thread_data_t* data = (mandelbrot_thread_data_t*)arg;
+    uint32_t img_size = data->img_size;
+    uint32_t max_iters = data->max_iters;
+    uint32_t* out = data->out;
+    uint64_t thread_idx = data->thread_idx;
+    int num_threads = data->num_threads;
+
+    uint32_t j_chunk_size = 16;
+    assert(img_size % j_chunk_size == 0);
+    uint32_t num_j_chunks = img_size / j_chunk_size;
+
+    __m512 img_size_vec = _mm512_set1_ps(img_size);
+    __m512 window_zoom_vec = _mm512_set1_ps(window_zoom);
+    __m512 window_x_vec = _mm512_set1_ps(window_x);
+    __m512 window_y_vec = _mm512_set1_ps(window_y);
+    __m512i max_iters_vec = _mm512_set1_epi32(max_iters);
+
+    for (uint64_t i = thread_idx; i < img_size; i += num_threads) {
+        for (uint64_t j_ch = 0; j_ch < num_j_chunks; j_ch++) {
+            uint32_t base_j = j_ch * j_chunk_size;
+            __m512 j_vec = _mm512_set_ps(base_j + 15, base_j + 14, base_j + 13, base_j + 12,
+                                        base_j + 11, base_j + 10, base_j + 9, base_j + 8,
+                                        base_j + 7, base_j + 6, base_j + 5, base_j + 4,
+                                        base_j + 3, base_j + 2, base_j + 1, base_j + 0);
+            __m512 i_vec = _mm512_set1_ps(i);
+            __m512 cx_div = _mm512_div_ps(j_vec, img_size_vec);
+            __m512 cx_mul = _mm512_mul_ps(cx_div, window_zoom_vec);
+            __m512 cx = _mm512_add_ps(cx_mul, window_x_vec);
+            __m512 cy_div = _mm512_div_ps(i_vec, img_size_vec);
+            __m512 cy_mul = _mm512_mul_ps(cy_div, window_zoom_vec);
+            __m512 cy = _mm512_add_ps(cy_mul, window_y_vec);
+
+            __m512 x2 = _mm512_set1_ps(0);
+            __m512 y2 = _mm512_set1_ps(0);
+            __m512 w = _mm512_set1_ps(0);
+            __m512i iters = _mm512_set1_epi32(0);
+
+            __m512 x2_y2_sum = _mm512_add_ps(x2, y2);
+            __m512 four_vec = _mm512_set1_ps(4.0f);
+            __mmask16 less_than_four = _mm512_cmp_ps_mask(x2_y2_sum, four_vec, 2);
+            __mmask16 less_than_max_iters = _mm512_cmp_epi32_mask(iters, max_iters_vec, 1);
+            __mmask16 active_mask = _kand_mask16(less_than_four, less_than_max_iters);
+
+            while (active_mask) {
+                __m512 _x = _mm512_sub_ps(x2, y2);
+                __m512 x = _mm512_add_ps(_x, cx);
+                __m512 _y = _mm512_sub_ps(w, x2_y2_sum);
+                __m512 y = _mm512_add_ps(_y, cy);
+
+                x2 = _mm512_mul_ps(x, x);
+                y2 = _mm512_mul_ps(y, y);
+                __m512 z = _mm512_add_ps(x, y);
+                w = _mm512_mul_ps(z, z);
+
+                // inc loop bounds
+                iters = _mm512_mask_add_epi32(iters, active_mask, iters, _mm512_set1_epi32(1));
+
+                // repeat the loop bound checks here
+                x2_y2_sum = _mm512_mask_add_ps(x2_y2_sum, active_mask, x2, y2);
+                less_than_four = _mm512_cmp_ps_mask(x2_y2_sum, four_vec, 2);
+                less_than_max_iters = _mm512_cmp_epi32_mask(iters, max_iters_vec, 1);
+                active_mask = _kand_mask16(less_than_four, less_than_max_iters);
+            }
+
+            _mm512_storeu_epi32(&(out[i * img_size + j_ch * j_chunk_size]), iters);
+        }
+    }
+
+    return nullptr;
+}
+
+void mandelbrot_cpu_vector_multicore(uint32_t img_size, uint32_t max_iters, uint32_t *out) {
+    int num_threads = 8;
+    std::vector<pthread_t> threads(num_threads);
+    std::vector<mandelbrot_thread_data_t> thread_data(num_threads);
+
+    for (int idx = 0; idx < num_threads; idx++) {
+        thread_data[idx].img_size = img_size;
+        thread_data[idx].max_iters = max_iters;
+        thread_data[idx].out = out;
+        thread_data[idx].thread_idx = idx;
+        thread_data[idx].num_threads = num_threads;
+
+        pthread_create(&threads.at(idx), NULL, mandelbrot_cpu_vector_chunk_helper, &thread_data.at(idx));
+    }
+
+    for (int idx = 0; idx < num_threads; idx++) {
+        pthread_join(threads.at(idx), NULL);
+    }
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -89,6 +577,23 @@ void mandelbrot_cpu_vector_multicore_multithread(
     uint32_t max_iters,
     uint32_t *out) {
     // TODO: Implement this function.
+    int num_threads = 16;
+    std::vector<pthread_t> threads(num_threads);
+    std::vector<mandelbrot_thread_data_t> thread_data(num_threads);
+
+    for (int idx = 0; idx < num_threads; idx++) {
+        thread_data[idx].img_size = img_size;
+        thread_data[idx].max_iters = max_iters;
+        thread_data[idx].out = out;
+        thread_data[idx].thread_idx = idx;
+        thread_data[idx].num_threads = num_threads;
+
+        pthread_create(&threads.at(idx), NULL, mandelbrot_cpu_vector_chunk_helper, &thread_data.at(idx));
+    }
+
+    for (int idx = 0; idx < num_threads; idx++) {
+        pthread_join(threads.at(idx), NULL);
+    }
 }
 
 ////////////////////////////////////////////////////////////////////////////////

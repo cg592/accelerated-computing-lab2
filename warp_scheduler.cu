@@ -31,7 +31,7 @@ tail_latency_fma(const float *__restrict__ in, float *__restrict__ out, int N) {
 void launch_tail_latency_fma(
     const float *in,
     float *out,
-    int N,
+    int N, // total number of threads
     uint32_t tile_size,
     uint32_t num_threads_per_block) {
     uint32_t block_size = default_tile_size * num_threads_per_block;
